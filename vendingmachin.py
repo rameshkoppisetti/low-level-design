@@ -1,69 +1,119 @@
-# ---------------- PRODUCT ----------------
+from abc import ABC, abstractmethod
+
+
+# =========================
+# PRODUCT
+# =========================
+
 class Product:
-    def __init__(self, name, price):
+    def __init__(self, code, name, price):
+        self.code = code
         self.name = name
         self.price = price
 
 
-# ---------------- INVENTORY ----------------
+# =========================
+# INVENTORY ITEM (NEW)
+# =========================
+
+class InventoryItem:
+    def __init__(self, product: Product, quantity: int):
+        self.product = product
+        self.quantity = quantity
+
+    def is_available(self):
+        return self.quantity > 0
+
+    def deduct(self):
+        if self.quantity <= 0:
+            raise ValueError("Out of stock")
+        self.quantity -= 1
+
+
+# =========================
+# INVENTORY
+# =========================
+
 class Inventory:
     def __init__(self):
-        self.items = {}
+        self.items = {}  # code -> InventoryItem
 
-    def add_product(self, product, count):
-        self.items[product] = count
+    def add_product(self, product: Product, quantity: int):
+        self.items[product.code] = InventoryItem(product, quantity)
 
-    def is_available(self, product):
-        return self.items.get(product, 0) > 0
+    def is_available(self, code):
+        return code in self.items and self.items[code].is_available()
 
-    def deduct(self, product):
-        self.items[product] -= 1
+    def get_item(self, code):
+        return self.items.get(code)
+
+    def deduct(self, code):
+        if not self.is_available(code):
+            raise ValueError("Out of stock")
+        self.items[code].deduct()
 
 
-# ---------------- STATE INTERFACE ----------------
-class State:
-    def select_product(self, vm, product):
-        print("Invalid action")
+# =========================
+# STATE INTERFACE
+# =========================
+
+class State(ABC):
+
+    def select_product(self, vm, code):
+        raise ValueError("Invalid action")
 
     def insert_money(self, vm, amount):
-        print("Invalid action")
+        raise ValueError("Invalid action")
 
     def dispense(self, vm):
-        print("Invalid action")
+        raise ValueError("Invalid action")
 
     def cancel(self, vm):
-        print("Invalid action")
+        raise ValueError("Invalid action")
 
 
-# ---------------- STATES ----------------
+# =========================
+# STATES
+# =========================
+
 class IdleState(State):
-    def select_product(self, vm, product):
-        if not vm.inventory.is_available(product):
-            print("Out of stock")
-            return
-        vm.selected_product = product
-        vm.set_state(HasSelectionState())
-        print(f"Selected {product.name}")
+
+    def select_product(self, vm, code):
+        if not vm.inventory.is_available(code):
+            raise ValueError("Out of stock")
+
+        vm.selected_item = vm.inventory.get_item(code)
+        vm.set_state(vm.has_selection_state)
+
+        print(f"Selected {vm.selected_item.product.name}")
 
 
 class HasSelectionState(State):
+
     def insert_money(self, vm, amount):
         vm.balance += amount
+        product = vm.selected_item.product
+
         print(f"Inserted {amount}, total={vm.balance}")
 
-        if vm.balance >= vm.selected_product.price:
-            vm.set_state(HasMoneyState())
+        if vm.balance < product.price:
+            print(f"Remaining: {product.price - vm.balance}")
+        else:
+            vm.set_state(vm.has_money_state)
 
     def cancel(self, vm):
-        print("Cancelled")
+        print(f"Refund: {vm.balance}")
         vm.reset()
 
 
 class HasMoneyState(State):
-    def dispense(self, vm):
-        product = vm.selected_product
 
-        vm.inventory.deduct(product)
+    def dispense(self, vm):
+        item = vm.selected_item
+        product = item.product
+
+        vm.inventory.deduct(product.code)
+
         change = vm.balance - product.price
 
         print(f"Dispensed {product.name}")
@@ -73,21 +123,37 @@ class HasMoneyState(State):
         vm.reset()
 
 
-# ---------------- VENDING MACHINE ----------------
+# =========================
+# VENDING MACHINE (CONTEXT)
+# =========================
+
 class VendingMachine:
+
     def __init__(self):
         self.inventory = Inventory()
-        self.state = IdleState()
 
-        self.selected_product = None
+        # reuse state objects (important)
+        self.idle_state = IdleState()
+        self.has_selection_state = HasSelectionState()
+        self.has_money_state = HasMoneyState()
+
+        self.state = self.idle_state
+
+        self.selected_item = None
         self.balance = 0
 
     def set_state(self, state):
         self.state = state
 
-    # API
-    def select_product(self, product):
-        self.state.select_product(self, product)
+    def reset(self):
+        self.selected_item = None
+        self.balance = 0
+        self.set_state(self.idle_state)
+
+    # APIs
+
+    def select_product(self, code):
+        self.state.select_product(self, code)
 
     def insert_money(self, amount):
         self.state.insert_money(self, amount)
@@ -98,23 +164,25 @@ class VendingMachine:
     def cancel(self):
         self.state.cancel(self)
 
-    def reset(self):
-        self.selected_product = None
-        self.balance = 0
-        self.set_state(IdleState())
 
+# =========================
+# DEMO
+# =========================
 
-# ---------------- DEMO ----------------
-if __name__ == "__main__":
+def main():
     vm = VendingMachine()
 
-    coke = Product("Coke", 50)
-    chips = Product("Chips", 30)
+    coke = Product("A1", "Coke", 50)
+    chips = Product("A2", "Chips", 30)
 
     vm.inventory.add_product(coke, 5)
-    vm.inventory.add_product(chips, 5)
+    vm.inventory.add_product(chips, 2)
 
-    vm.select_product(coke)
+    vm.select_product("A1")
     vm.insert_money(20)
-    vm.insert_money(30)
+    vm.insert_money(40)
     vm.dispense()
+
+
+if __name__ == "__main__":
+    main()
