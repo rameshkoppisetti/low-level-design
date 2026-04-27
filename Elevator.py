@@ -108,7 +108,7 @@ class Elevator:
 
 
 # =========================
-# SCHEDULER
+# SCHEDULER   # Nearest Car Algorithm (Dispatch Strategy)
 # =========================
 
 class Scheduler:
@@ -128,11 +128,6 @@ class Scheduler:
     def _score(self, e: Elevator, r: Request):
         with e.lock:
             dist = abs(e.current_floor - r.floor)
-
-            # =========================
-            # Nearest Car Algorithm (Dispatch Strategy)
-            # =========================
-
             # idle → best candidate
             if e.state == ElevatorState.IDLE:
                 return dist

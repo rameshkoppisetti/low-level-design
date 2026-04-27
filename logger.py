@@ -52,6 +52,25 @@ class ConsoleAppender(Appender):
         with self.lock:
             print(self.formatter.format(log_message))
 
+class FileAppender(Appender):
+    def __init__(self, file_name, formatter: Formatter):
+        super().__init__(formatter)
+        self.file_name = file_name
+        self.lock = threading.Lock()
+
+        # keep file handle open (better performance)
+        self.file = open(self.file_name, "a")
+
+    def append(self, log: LogMessage):
+        formatted = self.formatter.format(log)
+
+        with self.lock:
+            self.file.write(formatted + "\n")
+            self.file.flush()   # ensure durability
+
+    def close(self):
+        with self.lock:
+            self.file.close()
 
 # ---------------- FILTER ----------------
 class Filter(ABC):
@@ -74,6 +93,7 @@ class AsyncAppender(Appender):
         # max_queue_size = 0 means unbounded
         self.appender = appender
         self.queue = queue.Queue(maxsize=max_queue_size)
+        self.running = True
 
         self.worker = threading.Thread(target=self._worker, daemon=True)
         self.worker.start()
@@ -86,10 +106,17 @@ class AsyncAppender(Appender):
             pass
 
     def _worker(self):
-        while True:
-            msg = self.queue.get()
-            self.appender.append(msg)
-            self.queue.task_done()
+        while self.running or not self.queue.empty():
+            try:
+                msg = self.queue.get(timeout=0.5)
+                self.appender.append(msg)
+                self.queue.task_done()
+            except queue.Empty:
+                continue
+
+    def shutdown(self):
+        self.running = False
+        self.worker.join()
 
 
 # ---------------- LOGGER ----------------
