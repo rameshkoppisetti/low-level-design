@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 import heapq
 import threading
@@ -12,10 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 # REQUEST
 # =========================
 class JobRequest:
-    def __init__(self, name, task, schedule_type):
+    def __init__(self, name, task, schedule_type, cron_expr=None):
         self.name = name
         self.task = task
         self.schedule_type = schedule_type
+        self.cron_expr = cron_expr
 
 
 # =========================
@@ -23,8 +24,9 @@ class JobRequest:
 # =========================
 class ScheduleType(Enum):
     HOURLY = 1
-    WEEKLY = 2
-    MONTHLY = 3
+    MONTHLY = 2
+    WEEKLY = 3
+    CRON = 4   # 🔥 add this
 
 # =========================
 # STRATEGY
@@ -37,7 +39,7 @@ class ScheduleStrategy(ABC):
 
 class HourlyStrategy(ScheduleStrategy):
     def next_run_time(self, time):
-        return time + datetime.timedelta(hours=1)
+        return time + timedelta(hours=1)
 
 
 class WeeklyStrategy(ScheduleStrategy):
@@ -49,9 +51,77 @@ class WeeklyStrategy(ScheduleStrategy):
     def next_run_time(self, time):
         next_time = time
         while True:
-            next_time += datetime.timedelta(days=1)
+            next_time += timedelta(days=1)
             if next_time.weekday() == self.weekday:
                 return next_time.replace(hour=self.hour, minute=self.minute)
+            
+            
+
+
+# =========================
+# CRON FIELD PARSER
+# =========================
+class CronField:
+    def __init__(self, expr, min_val, max_val):
+        self.values = self.parse(expr, min_val, max_val)
+
+    def parse(self, expr, min_val, max_val):
+        if expr == "*":
+            return set(range(min_val, max_val + 1))
+
+        result = set()
+
+        for part in expr.split(","):
+            if "/" in part:  # step
+                base, step = part.split("/")
+                step = int(step)
+                start = min_val if base == "*" else int(base)
+                result.update(range(start, max_val + 1, step))
+
+            elif "-" in part:  # range
+                start, end = map(int, part.split("-"))
+                result.update(range(start, end + 1))
+
+            else:  # single value
+                result.add(int(part))
+
+        return result
+
+    def match(self, value):
+        return value in self.values
+
+
+# =========================
+# CRON SCHEDULE STRATEGY
+# =========================
+class CronSchedule(ScheduleStrategy):
+    def __init__(self, expression):
+        fields = expression.split()
+        if len(fields) != 5:
+            raise ValueError("Invalid cron expression")
+
+        self.minute = CronField(fields[0], 0, 59)
+        self.hour = CronField(fields[1], 0, 23)
+        self.day = CronField(fields[2], 1, 31)
+        self.month = CronField(fields[3], 1, 12)
+        self.weekday = CronField(fields[4], 0, 6)
+    
+
+    def next_run_time(self, after_time: datetime):
+        # round to next minute
+        t = after_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+        while True:
+            if (
+                self.minute.match(t.minute)
+                and self.hour.match(t.hour)
+                and self.day.match(t.day)
+                and self.month.match(t.month)
+                and self.weekday.match(t.weekday())
+            ):
+                return t
+
+            t += timedelta(minutes=1)
 
 
 class MonthlyStrategy(ScheduleStrategy):
@@ -72,14 +142,15 @@ class MonthlyStrategy(ScheduleStrategy):
 # =========================
 class ScheduleFactory:
     @staticmethod
-    def get_instance(type):
+    def get_instance(type, cron_expr=None):
         if type == ScheduleType.HOURLY:
             return HourlyStrategy()
         if type == ScheduleType.WEEKLY:
             return WeeklyStrategy()
         if type == ScheduleType.MONTHLY:
             return MonthlyStrategy()
-
+        if type == ScheduleType.CRON:
+            return CronSchedule(cron_expr)
 
 # =========================
 # JOB
@@ -126,10 +197,13 @@ class SchedulerEngine:
         self.thread.start()
 
     def create_job(self, job_request: JobRequest):
-        schedule = ScheduleFactory.get_instance(job_request.schedule_type)
+        schedule = ScheduleFactory.get_instance(
+            job_request.schedule_type,
+            job_request.cron_expr
+        )
         job = Job(job_request.name, job_request.task, schedule)
 
-        run_time = schedule.next_run_time(datetime.datetime.now())
+        run_time = schedule.next_run_time(datetime.now())
 
         with self.lock:
             self.jobs[job.id] = job
@@ -145,7 +219,7 @@ class SchedulerEngine:
                     job = None
                 else:
                     run_time, job_id = self.heap[0]
-                    now = datetime.datetime.now()
+                    now = datetime.now()
                     diff = (run_time - now).total_seconds()
 
                     if diff <= 0:
@@ -169,7 +243,7 @@ class SchedulerEngine:
             self.reschedule(job)
 
     def reschedule(self, job):
-        next_time = job.schedule.next_run_time(datetime.datetime.now())
+        next_time = job.schedule.next_run_time(datetime.now())
 
         with self.lock:
             if job.id in self.jobs:
@@ -191,6 +265,13 @@ def main():
     scheduler = SchedulerEngine()
 
     job1 = JobRequest("job1", PrintTask(), ScheduleType.HOURLY)
+    scheduler.create_job(job1)
+    job = JobRequest(
+        "job2",
+        PrintTask(),
+        ScheduleType.CRON,
+        "*/5 * * * *"
+    )
     scheduler.create_job(job1)
 
     time.sleep(5)
