@@ -1,0 +1,107 @@
+Final DB Schema (BookMyShow-style)
+
+Movie(
+  movie_id PK,
+  name,
+  duration_minutes,
+  language,
+  release_date,
+  status   -- NOW_SHOWING / UPCOMING
+)
+
+Theatre(
+  theatre_id PK,
+  name,
+  city,
+  address
+)
+
+Screen(
+  screen_id PK,
+  theatre_id FK,
+  name,
+  total_seats
+)
+
+Seat(
+  seat_id PK,
+  screen_id FK,
+  row_number,
+  seat_number,
+  category   -- GOLD / SILVER / PLATINUM
+)
+
+Show(
+  show_id PK,
+  movie_id FK,
+  screen_id FK,
+  start_time,
+  end_time
+)
+
+ShowPricing(
+  show_id,
+  category,
+  price,
+  PRIMARY KEY (show_id, category)
+)
+
+ShowSeat(
+  show_id,
+  seat_id,
+  status,   -- AVAILABLE / LOCKED / BOOKED
+  lock_expiry_time,
+  PRIMARY KEY (show_id, seat_id)
+)
+
+Booking(
+  booking_id PK,
+  user_id,
+  show_id,
+  status,   -- PENDING / CONFIRMED / CANCELLED
+  total_amount,
+  created_at
+)
+
+
+BookingSeat(
+  booking_id,
+  show_id,
+  seat_id,
+  price_at_booking,   -- FINAL price stored
+  PRIMARY KEY (booking_id, seat_id)
+)
+
+Payment(
+  payment_id PK,
+  booking_id FK,
+  amount,
+  status,   -- INITIATED / SUCCESS / FAILED
+  payment_method,
+  transaction_ref
+)
+
+🔐 Constraints (INTERVIEW CRITICAL)
+Prevent double booking
+UNIQUE(show_id, seat_id)
+
+👉 Already enforced via PK in ShowSeat
+⚡ Indexes (mention this for SDE3 boost)
+INDEX(movie_id)
+INDEX(theatre_id)
+INDEX(city)
+INDEX(show_id)
+
+🔄 Booking Flow (tie schema to logic)
+1. Fetch ShowSeat (AVAILABLE)
+2. Lock seats → update status = LOCKED
+3. Create Booking (PENDING)
+4. Payment
+5. SUCCESS → BOOKED
+6. FAILURE → release seats
+🧠 Why this schema is “perfect”
+
+✔ Separation of concerns
+✔ Handles concurrency
+✔ Supports dynamic pricing
+✔ Scales for millions of bookings
