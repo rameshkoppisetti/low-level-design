@@ -1,10 +1,3 @@
-# Copyright 2017 WorkSpan. All Rights Reserved.
-#
-# Primary: Vinayak Shenoi
-# Secondary:
-#
-#
-
 from _future_ import absolute_import
 from common.task_utils import (
     Task, InParallelTasks, pickleable, TaskStatus,

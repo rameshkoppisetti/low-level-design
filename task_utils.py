@@ -1,9 +1,3 @@
-#
-# Copyright 2015 Workspan. All Rights Reserved.
-#
-
-# Utility functions for tasks.
-#
 import logging
 import os
 import types
