@@ -134,7 +134,7 @@ class MonthlyStrategy(ScheduleStrategy):
         month = time.month + 1 if time.day >= self.day else time.month
         year = time.year + (month // 12)
         month = month % 12 or 12
-        return datetime.datetime(year, month, self.day, self.hour, self.minute)
+        return datetime(year, month, self.day, self.hour, self.minute)
 
 
 # =========================
