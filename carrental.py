@@ -1,244 +1,500 @@
 import uuid
 from enum import Enum
+from threading import Lock, Thread
 from datetime import datetime
-import math
+from abc import ABC, abstractmethod
 
 
-# =========================
-# ENUMS
-# =========================
+# =========================================================
+# DOMAIN
+# =========================================================
 
 class VehicleType(Enum):
-    CAR = 1
-    BIKE = 2
-    TRUCK = 3
+    SEDAN = "SEDAN"
+    SUV = "SUV"
+    HATCHBACK = "HATCHBACK"
 
 
 class BookingStatus(Enum):
-    CREATED = 1
-    ACTIVE = 2
-    COMPLETED = 3
-    CANCELLED = 4
+    RESERVED = "RESERVED"
+    CONFIRMED = "CONFIRMED"
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
-# =========================
-# DOMAIN
-# =========================
+class User:
 
-import threading
+    def __init__(self, name):
+
+        self.id = str(uuid.uuid4())
+
+        self.name = name
+
 
 class Vehicle:
-    def __init__(self, vehicle_id, v_type, base_price):
-        self.id = vehicle_id
-        self.type = v_type
-        self.base_price = base_price
-        self.bookings = []
-        self.lock = threading.Lock()   # 🔥 important
+
+    def __init__(
+        self,
+        number,
+        vehicle_type,
+        price_per_hour
+    ):
+
+        self.id = str(uuid.uuid4())
+
+        self.number = number
+
+        self.vehicle_type = vehicle_type
+
+        self.price_per_hour = price_per_hour
+
+        self.lock = Lock()
+
+    def __repr__(self):
+
+        return (
+            f"Vehicle("
+            f"number={self.number}, "
+            f"type={self.vehicle_type.value})"
+        )
+
+
+class Reservation:
+
+    def __init__(
+        self,
+        vehicle_id,
+        user_id,
+        start_time,
+        end_time
+    ):
+
+        self.id = str(uuid.uuid4())
+
+        self.vehicle_id = vehicle_id
+
+        self.user_id = user_id
+
+        self.start_time = start_time
+
+        self.end_time = end_time
+
 
 class Booking:
-    def __init__(self, vehicle_id, start, end):
+
+    def __init__(
+        self,
+        user,
+        reservation,
+        total_price
+    ):
+
         self.id = str(uuid.uuid4())
-        self.vehicle_id = vehicle_id
-        self.start_time = start
-        self.end_time = end
-        self.status = BookingStatus.CREATED
 
-    def activate(self):
-        if self.status != BookingStatus.CREATED:
-            raise ValueError("Invalid transition")
-        self.status = BookingStatus.ACTIVE
+        self.user = user
 
-    def complete(self):
-        if self.status != BookingStatus.ACTIVE:
-            raise ValueError("Rental not active")
-        self.status = BookingStatus.COMPLETED
+        self.reservation = reservation
 
-    def cancel(self):
-        if self.status != BookingStatus.CREATED:
-            raise ValueError("Cannot cancel")
-        self.status = BookingStatus.CANCELLED
+        self.total_price = total_price
+
+        self.status = BookingStatus.RESERVED
+
+    def update_status(self, status):
+        self.status = status
 
 
-# =========================
-# SERVICES
-# =========================
+# =========================================================
+# PAYMENT STRATEGY
+# =========================================================
+
+class PaymentStrategy(ABC):
+
+    @abstractmethod
+    def pay(self, booking, amount):
+        pass
+
+    @abstractmethod
+    def refund(self, booking, amount):
+        pass
+
+
+class UpiPayment(PaymentStrategy):
+
+    def pay(self, booking, amount):
+
+        print(
+            f"Payment success "
+            f"booking={booking.id} "
+            f"amount={amount}"
+        )
+
+        return True
+
+    def refund(self, booking, amount):
+
+        print(
+            f"Refund success "
+            f"booking={booking.id} "
+            f"amount={amount}"
+        )
+
+        return True
+
+
+# =========================================================
+# AVAILABILITY SERVICE
+# =========================================================
 
 class AvailabilityService:
-    def is_available(self, vehicle, start, end):
-        for booking in vehicle.bookings:
-            if booking.status == BookingStatus.CANCELLED:
+
+    @staticmethod
+    def overlaps(
+        existing_start,
+        existing_end,
+        requested_start,
+        requested_end
+    ):
+
+        return not (
+            requested_end <= existing_start
+            or
+            requested_start >= existing_end
+        )
+
+    def is_available(
+        self,
+        reservations,
+        vehicle_id,
+        start_time,
+        end_time
+    ):
+
+        for reservation in reservations:
+
+            if reservation.vehicle_id != vehicle_id:
                 continue
 
-            # overlap check
-            if not (end <= booking.start_time or start >= booking.end_time):
+            if self.overlaps(
+                reservation.start_time,
+                reservation.end_time,
+                start_time,
+                end_time
+            ):
                 return False
 
         return True
 
 
+# =========================================================
+# SEARCH SERVICE
+# =========================================================
+
 class SearchService:
-    def __init__(self, availability_service):
-        self.availability = availability_service
 
-    def search(self, vehicles, v_type, start, end):
-        result = []
+    def __init__(
+        self,
+        vehicles,
+        availability_service,
+        reservations
+    ):
 
-        for v in vehicles.values():
-            if v.type != v_type:
-                continue
+        self.vehicles = vehicles
 
-            if self.availability.is_available(v, start, end):
-                result.append(v)
-
-        return result
-
-
-# =========================
-# PRICING STRATEGY
-# =========================
-
-class PricingStrategy:
-    def calculate(self, vehicle, start, end):
-        raise NotImplementedError
-
-
-class HourlyPricing(PricingStrategy):
-    def __init__(self, rate_map):
-        self.rate_map = rate_map
-
-    def calculate(self, vehicle, start, end):
-        rate = self.rate_map.get(vehicle.type)
-
-        duration_hours = (end - start).total_seconds() / 3600
-        hours = math.ceil(duration_hours)
-
-        return hours * rate
-
-
-# =========================
-# RENTAL SERVICE (ORCHESTRATOR)
-# =========================
-
-class RentalService:
-    def __init__(self, pricing_strategy):
-        self.vehicles = {}
-        self.bookings = {}
-
-        self.availability = AvailabilityService()
-        self.search_service = SearchService(self.availability)
-
-        self.pricing = pricing_strategy
-
-    # ---------- VEHICLE ----------
-    def add_vehicle(self, vehicle):
-        self.vehicles[vehicle.id] = vehicle
-
-    # ---------- SEARCH ----------
-    def search(self, v_type, start, end):
-        return self.search_service.search(
-            self.vehicles, v_type, start, end
+        self.availability_service = (
+            availability_service
         )
 
-    # ---------- BOOK ----------
-    def book(self, vehicle_id, start, end):
+        self.reservations = reservations
+
+    def search(
+        self,
+        vehicle_type,
+        start_time,
+        end_time
+    ):
+
+        available_vehicles = []
+
+        for vehicle in self.vehicles.values():
+
+            if vehicle.vehicle_type != vehicle_type:
+                continue
+
+            if self.availability_service.is_available(
+                self.reservations.values(),
+                vehicle.id,
+                start_time,
+                end_time
+            ):
+
+                available_vehicles.append(vehicle)
+
+        return available_vehicles
+
+
+# =========================================================
+# RENTAL SERVICE
+# =========================================================
+
+class RentalService:
+
+    def __init__(
+        self,
+        vehicles,
+        payment_strategy
+    ):
+
+        self.vehicles = vehicles
+
+        self.payment_strategy = payment_strategy
+
+        self.availability_service = (
+            AvailabilityService()
+        )
+
+        self.reservations = {}
+
+        self.bookings = {}
+
+    def calculate_price(
+        self,
+        vehicle,
+        start_time,
+        end_time
+    ):
+
+        duration_hours = (
+            end_time - start_time
+        ).seconds / 3600
+
+        return (
+            duration_hours *
+            vehicle.price_per_hour
+        )
+
+    def reserve_vehicle(
+        self,
+        user,
+        vehicle_id,
+        start_time,
+        end_time
+    ):
+
         vehicle = self.vehicles.get(vehicle_id)
 
         if not vehicle:
-            raise ValueError("Vehicle not found")
+            raise ValueError(
+                "Vehicle not found"
+            )
 
-        # 🔥 acquire lock
         with vehicle.lock:
 
-            # 🔥 re-check availability INSIDE lock
-            if not self.availability.is_available(vehicle, start, end):
-                raise ValueError("Vehicle unavailable")
+            # --------------------------------------------
+            # RECHECK INSIDE LOCK
+            # prevents double booking
+            # --------------------------------------------
+            if not self.availability_service.is_available(
+                self.reservations.values(),
+                vehicle.id,
+                start_time,
+                end_time
+            ):
 
-            booking = Booking(vehicle_id, start, end)
+                raise ValueError(
+                    "Vehicle unavailable"
+                )
 
-            vehicle.bookings.append(booking)
+            reservation = Reservation(
+                vehicle.id,
+                user.id,
+                start_time,
+                end_time
+            )
+
+            self.reservations[
+                reservation.id
+            ] = reservation
+
+            total_price = self.calculate_price(
+                vehicle,
+                start_time,
+                end_time
+            )
+
+            booking = Booking(
+                user,
+                reservation,
+                total_price
+            )
+
             self.bookings[booking.id] = booking
 
-            print(f"✅ Booked: {vehicle_id}")
+            print(
+                f"Vehicle reserved "
+                f"booking={booking.id}"
+            )
+
             return booking
 
-    # ---------- PICKUP ----------
-    def pickup(self, booking_id):
-        booking = self.bookings.get(booking_id)
+    def confirm_booking(
+        self,
+        booking_id
+    ):
 
-        if not booking:
-            raise ValueError("Invalid booking")
-
-        booking.activate()
-        print("🚗 Ride started")
-
-    # ---------- RETURN ----------
-    def return_vehicle(self, booking_id):
-        booking = self.bookings.get(booking_id)
-
-        if not booking:
-            raise ValueError("Invalid booking")
-
-        booking.complete()
-
-        vehicle = self.vehicles.get(booking.vehicle_id)
-
-        price = self.pricing.calculate(
-            vehicle,
-            booking.start_time,
-            booking.end_time
+        booking = self.bookings.get(
+            booking_id
         )
 
-        print(f"💰 Price: {price}")
-        return price
+        if not booking:
+            raise ValueError(
+                "Booking not found"
+            )
 
-    # ---------- CANCEL ----------
-    def cancel(self, booking_id):
-        booking = self.bookings.get(booking_id)
+        if booking.status != BookingStatus.RESERVED:
+            return booking
+
+        payment_success = (
+            self.payment_strategy.pay(
+                booking,
+                booking.total_price
+            )
+        )
+
+        if not payment_success:
+
+            booking.update_status(
+                BookingStatus.CANCELLED
+            )
+
+            del self.reservations[
+                booking.reservation.id
+            ]
+
+            return booking
+
+        booking.update_status(
+            BookingStatus.CONFIRMED
+        )
+
+        return booking
+
+    def cancel_booking(
+        self,
+        booking_id
+    ):
+
+        booking = self.bookings.get(
+            booking_id
+        )
 
         if not booking:
-            raise ValueError("Invalid booking")
+            raise ValueError(
+                "Booking not found"
+            )
 
-        booking.cancel()
-        print("❌ Booking cancelled")
+        if booking.status == BookingStatus.CANCELLED:
+            return booking
+
+        if booking.status == BookingStatus.CONFIRMED:
+
+            self.payment_strategy.refund(
+                booking,
+                booking.total_price
+            )
+
+        booking.update_status(
+            BookingStatus.CANCELLED
+        )
+
+        del self.reservations[
+            booking.reservation.id
+        ]
+
+        return booking
 
 
-from datetime import datetime, timedelta
-
+# =========================================================
+# DEMO
+# =========================================================
 
 def main():
-    # ---------- Setup ----------
-    rate_map = {
-        VehicleType.CAR: 100,
-        VehicleType.BIKE: 50,
-        VehicleType.TRUCK: 200
-    }
 
-    service = RentalService(HourlyPricing(rate_map))
+    vehicles = {}
 
-    # add vehicles
-    v1 = Vehicle("V1", VehicleType.CAR, 100)
-    service.add_vehicle(v1)
+    car1 = Vehicle(
+        "KA01AB1234",
+        VehicleType.SEDAN,
+        100
+    )
 
-    start = datetime.now()
-    end = start + timedelta(hours=2)
+    car2 = Vehicle(
+        "KA02CD5678",
+        VehicleType.SUV,
+        200
+    )
 
-    # ---------- Search ----------
-    print("\n🔍 Searching vehicles...")
-    results = service.search(VehicleType.CAR, start, end)
-    print([v.id for v in results])
+    vehicles[car1.id] = car1
+    vehicles[car2.id] = car2
 
-    # ---------- Concurrent Booking ----------
-    print("\n⚡ Simulating concurrent booking...")
+    user = User("satya")
 
-    def attempt_booking(user):
+    rental_service = RentalService(
+        vehicles,
+        UpiPayment()
+    )
+
+    search_service = SearchService(
+        vehicles,
+        rental_service.availability_service,
+        rental_service.reservations
+    )
+
+    start_time = datetime(
+        2026, 5, 20, 10, 0
+    )
+
+    end_time = datetime(
+        2026, 5, 20, 15, 0
+    )
+
+    available = search_service.search(
+        VehicleType.SEDAN,
+        start_time,
+        end_time
+    )
+
+    print("Available:", available)
+
+    # =====================================================
+    # CONCURRENT BOOKING TEST
+    # =====================================================
+
+    def book_vehicle():
+
         try:
-            booking = service.book("V1", start, end)
-            print(f"{user} SUCCESS → BookingID: {booking.id}")
-        except Exception as e:
-            print(f"{user} FAILED → {e}")
 
-    t1 = threading.Thread(target=attempt_booking, args=("User1",))
-    t2 = threading.Thread(target=attempt_booking, args=("User2",))
+            booking = (
+                rental_service.reserve_vehicle(
+                    user,
+                    car1.id,
+                    start_time,
+                    end_time
+                )
+            )
+
+            print(
+                f"Reserved -> {booking.id}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"Booking failed -> {e}"
+            )
+
+    t1 = Thread(target=book_vehicle)
+    t2 = Thread(target=book_vehicle)
 
     t1.start()
     t2.start()
@@ -246,20 +502,35 @@ def main():
     t1.join()
     t2.join()
 
-    # ---------- Pickup + Return ----------
-    print("\n🚗 Completing booking...")
+    # =====================================================
+    # CONFIRM BOOKING
+    # =====================================================
 
-    # pick first successful booking
-    booking_ids = list(service.bookings.keys())
-    if booking_ids:
-        booking_id = booking_ids[0]
+    booking = list(
+        rental_service.bookings.values()
+    )[0]
 
-        service.pickup(booking_id)
+    booking = rental_service.confirm_booking(
+        booking.id
+    )
 
-        # simulate trip end
-        service.bookings[booking_id].end_time = datetime.now() + timedelta(hours=3)
+    print(
+        f"Booking Status -> "
+        f"{booking.status.value}"
+    )
 
-        service.return_vehicle(booking_id)
+    # =====================================================
+    # CANCEL BOOKING
+    # =====================================================
+
+    booking = rental_service.cancel_booking(
+        booking.id
+    )
+
+    print(
+        f"Booking Status -> "
+        f"{booking.status.value}"
+    )
 
 
 if __name__ == "__main__":
