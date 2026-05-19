@@ -1,6 +1,16 @@
 import time
 import threading
 
+"""
+timestamp | machine_id | sequence
+
+Classic Snowflake design.
+
+41 bits timestamp
+10 bits machine
+12 bits sequence
+"""
+
 
 class SnowflakeIdGenerator:
     def __init__(self, machine_id: int):
