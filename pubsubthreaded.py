@@ -82,8 +82,8 @@ class ChannelWorker(threading.Thread):
                 self.task_queue.task_done()
 
 
-# ================= PUBLISHER =================
-class EventPublisher:
+# ================= EVENT BUS / ORCHESTRATOR =================
+class EventBus:
     def __init__(self):
         self.subscribers = defaultdict(list)
 
@@ -111,15 +111,29 @@ class EventPublisher:
             channel = type(sub).__name__
             self.channel_queues[channel].put(event)
 
+    def wait_until_idle(self):
+        for q in self.channel_queues.values():
+            q.join()
+
+
+# ================= PUBLISHER =================
+class EventPublisher:
+    def __init__(self, event_bus: EventBus):
+        self.event_bus = event_bus
+
+    def publish(self, event: Event):
+        self.event_bus.publish(event)
+
 
 # ================= MAIN =================
 def main():
-    publisher = EventPublisher()
+    event_bus = EventBus()
+    publisher = EventPublisher(event_bus)
 
     # subscribe channels
-    publisher.subscribe("ORDER_PLACED", EmailSubscriber())
-    publisher.subscribe("ORDER_PLACED", SMSSubscriber())
-    publisher.subscribe("ORDER_PLACED", PushSubscriber())
+    event_bus.subscribe("ORDER_PLACED", EmailSubscriber())
+    event_bus.subscribe("ORDER_PLACED", SMSSubscriber())
+    event_bus.subscribe("ORDER_PLACED", PushSubscriber())
 
     # publish event
     event = Event(
@@ -130,8 +144,7 @@ def main():
     )
 
     publisher.publish(event)
-
-    time.sleep(2)  # allow workers to process
+    event_bus.wait_until_idle()
 
 
 if __name__ == "__main__":
