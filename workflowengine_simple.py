@@ -47,6 +47,7 @@ class TaskDefinition:
 class WorkflowDefinition:
     workflow_id: str
     tasks: Dict[str, TaskDefinition]
+    topological_order: List[str]
 
 
 @dataclass
@@ -112,9 +113,16 @@ class WorkflowEngine:
         self.executions: Dict[str, WorkflowExecution] = {}
 
     def register_workflow(self, workflow_id: str, tasks: List[TaskDefinition]) -> None:
+        if len({task.task_id for task in tasks}) != len(tasks):
+            raise ValueError("Duplicate task ids are not allowed")
+
         task_map = {task.task_id: task for task in tasks}
-        self._validate_workflow(task_map)
-        self.workflows[workflow_id] = WorkflowDefinition(workflow_id, task_map)
+        topological_order = self._topological_sort(task_map)
+        self.workflows[workflow_id] = WorkflowDefinition(
+            workflow_id,
+            task_map,
+            topological_order,
+        )
 
     def start(self, workflow_id: str) -> str:
         if workflow_id not in self.workflows:
@@ -129,7 +137,7 @@ class WorkflowEngine:
             status=WorkflowStatus.RUNNING,
             task_executions={
                 task_id: TaskExecution(task_id)
-                for task_id in workflow.tasks
+                for task_id in workflow.topological_order
             },
         )
 
@@ -155,7 +163,9 @@ class WorkflowEngine:
     def _get_ready_tasks(self, execution: WorkflowExecution) -> List[TaskExecution]:
         ready = []
 
-        for task_id, task_execution in execution.task_executions.items():
+        for task_id in execution.workflow.topological_order:
+            task_execution = execution.task_executions[task_id]
+
             if task_execution.status != TaskStatus.PENDING:
                 continue
 
@@ -204,7 +214,8 @@ class WorkflowEngine:
         elif any(status == TaskStatus.FAILED for status in task_statuses):
             execution.status = WorkflowStatus.FAILED
 
-    def _validate_workflow(self, tasks: Dict[str, TaskDefinition]) -> None:
+    def _topological_sort(self, tasks: Dict[str, TaskDefinition]) -> List[str]:
+        order = []
         visited = set()
         visiting = set()
 
@@ -223,9 +234,12 @@ class WorkflowEngine:
 
             visiting.remove(task_id)
             visited.add(task_id)
+            order.append(task_id)
 
         for task_id in tasks:
             dfs(task_id)
+
+        return order
 
 
 # =========================
