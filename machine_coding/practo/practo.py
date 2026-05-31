@@ -62,7 +62,6 @@ class Appointment:
 class SlotOption:
     doctor_id: str
     doctor_name: str
-    speciality: Speciality
     slot: str
 
 
@@ -240,7 +239,6 @@ class PractoService:
                         SlotOption(
                             doctor_id=doctor.doctor_id,
                             doctor_name=doctor.name,
-                            speciality=doctor.speciality,
                             slot=doctor_slot.slot,
                         )
                     )
@@ -263,6 +261,7 @@ class PractoService:
                 raise ValidationError("Patient already has appointment in this slot")
 
             if not doctor_slot.is_available():
+                # Requested booking is not confirmed; patient is only waitlisted.
                 if patient_id not in doctor_slot.waitlist:
                     doctor_slot.waitlist.append(patient_id)
                 raise SlotUnavailableError("Slot already booked; patient waitlisted")
