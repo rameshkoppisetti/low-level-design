@@ -104,6 +104,14 @@ class FoodOrderingTest(unittest.TestCase):
 
         self.assertEqual(["A2B"], order.restaurants())
 
+    def test_change_menu_removes_old_items_from_index(self):
+        app = FoodOrderingApp()
+        app.restaurant_service.add_restaurant("R1", {"Vada": 10}, 1)
+        app.restaurant_service.change_menu("R1", {"Idly": 10}, 1)
+
+        with self.assertRaises(OrderRejectedError):
+            app.order_service.place_order(["Vada"])
+
     def test_concurrent_orders_do_not_overbook_restaurant(self):
         app = FoodOrderingApp()
         app.restaurant_service.add_restaurant("Only Idly", {"Idly": 10}, 1)

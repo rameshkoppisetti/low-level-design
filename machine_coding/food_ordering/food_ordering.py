@@ -76,6 +76,7 @@ class Order:
 class RestaurantRepository:
     def __init__(self):
         self.restaurants: Dict[str, Restaurant] = {}
+        self.restaurants_by_item: DefaultDict[str, Set[str]] = defaultdict(set)
         self._lock = RLock()
 
     def create(self, restaurant: Restaurant) -> None:
@@ -84,6 +85,7 @@ class RestaurantRepository:
             if key in self.restaurants:
                 raise ValidationError(f"Restaurant already exists: {restaurant.name}")
             self.restaurants[key] = restaurant
+            self._add_to_item_index(restaurant)
 
     def get(self, restaurant_name: str) -> Restaurant:
         with self._lock:
@@ -99,6 +101,13 @@ class RestaurantRepository:
                 for restaurant in self.restaurants.values()
             }
 
+    def list_by_item(self) -> Dict[str, Set[str]]:
+        with self._lock:
+            return {
+                item: set(restaurant_names)
+                for item, restaurant_names in self.restaurants_by_item.items()
+            }
+
     def replace_menu(
         self,
         restaurant_name: str,
@@ -106,6 +115,7 @@ class RestaurantRepository:
         capacity: Optional[int],
     ) -> None:
         restaurant = self.get(restaurant_name)
+        normalized_menu = self._normalize_menu(menu)
 
         with restaurant.lock:
             if capacity is not None:
@@ -115,10 +125,31 @@ class RestaurantRepository:
                     raise ValidationError("New capacity is lower than in-flight item count")
                 restaurant.max_capacity = capacity
 
-            restaurant.menu = self._normalize_menu(menu)
+            with self._lock:
+                self._remove_from_item_index(restaurant.name, restaurant.menu)
+                restaurant.menu = normalized_menu
+                self._add_to_item_index(restaurant)
 
     def _key(self, restaurant_name: str) -> str:
         return restaurant_name.strip().lower()
+
+    def _add_to_item_index(self, restaurant: Restaurant) -> None:
+        for item in restaurant.menu:
+            self.restaurants_by_item[item].add(restaurant.name)
+
+    def _remove_from_item_index(
+        self,
+        restaurant_name: str,
+        menu: Dict[str, int],
+    ) -> None:
+        for item in menu:
+            restaurant_names = self.restaurants_by_item.get(item)
+            if not restaurant_names:
+                continue
+
+            restaurant_names.discard(restaurant_name)
+            if not restaurant_names:
+                del self.restaurants_by_item[item]
 
     def _normalize_menu(self, menu: Dict[str, int]) -> Dict[str, int]:
         if not menu:
@@ -156,7 +187,8 @@ class RestaurantSelectionStrategy(ABC):
     def select(
         self,
         items: List[str],
-        restaurants: List[Restaurant],
+        restaurants_by_name: Dict[str, Restaurant],
+        restaurants_by_item: Dict[str, Set[str]],
     ) -> Optional[List[OrderAssignment]]:
         pass
 
@@ -165,32 +197,29 @@ class LowestPriceSelectionStrategy(RestaurantSelectionStrategy):
     def select(
         self,
         items: List[str],
-        restaurants: List[Restaurant],
+        restaurants_by_name: Dict[str, Restaurant],
+        restaurants_by_item: Dict[str, Set[str]],
     ) -> Optional[List[OrderAssignment]]:
         normalized_items = [item.strip().lower() for item in items]
-        remaining_capacity = {
-            restaurant.name: restaurant.remaining_capacity()
-            for restaurant in restaurants
-        }
-        restaurants_by_name = {
-            restaurant.name: restaurant
-            for restaurant in restaurants
-        }
-        restaurants_by_item: DefaultDict[str, Set[str]] = defaultdict(set)
-        for restaurant in restaurants:
-            for item in restaurant.menu:
-                restaurants_by_item[item].add(restaurant.name)
-
-        if any(not restaurants_by_item[item] for item in normalized_items):
+        if any(not restaurants_by_item.get(item) for item in normalized_items):
             return None
+
+        candidate_restaurant_names = set()
+        for item in normalized_items:
+            candidate_restaurant_names.update(restaurants_by_item.get(item, set()))
+
+        remaining_capacity = {
+            name: restaurants_by_name[name].remaining_capacity()
+            for name in candidate_restaurant_names
+        }
 
         ordered_items = sorted(
             normalized_items,
             key=lambda item: (
-                len(restaurants_by_item[item]),
+                len(restaurants_by_item.get(item, set())),
                 min(
                     restaurants_by_name[name].menu[item]
-                    for name in restaurants_by_item[item]
+                    for name in restaurants_by_item.get(item, set())
                 ),
                 item,
             ),
@@ -213,7 +242,7 @@ class LowestPriceSelectionStrategy(RestaurantSelectionStrategy):
 
             item = ordered_items[index]
             candidate_names = sorted(
-                restaurants_by_item[item],
+                restaurants_by_item.get(item, set()),
                 key=lambda name: (restaurants_by_name[name].menu[item], name),
             )
 
@@ -289,8 +318,12 @@ class OrderService:
         self._validate_items(items)
 
         restaurants_by_name = self.restaurant_repo.list_all()
-        restaurants = list(restaurants_by_name.values())
-        assignments = self.selection_strategy.select(items, restaurants)
+        restaurants_by_item = self.restaurant_repo.list_by_item()
+        assignments = self.selection_strategy.select(
+            items,
+            restaurants_by_name,
+            restaurants_by_item,
+        )
 
         if not assignments:
             raise OrderRejectedError("Order cannot be fulfilled")
@@ -505,6 +538,27 @@ def test_capacity_fallback() -> None:
     )
 
 
+def test_fulfillment_releases_capacity() -> None:
+    app = FoodOrderingApp()
+    seed_data(app)
+
+    order = app.order_service.place_order(["Idly"])
+
+    assert_equal(
+        1,
+        app.stats_service.print_stats()["Eat Fit"],
+        "capacity should reduce after order",
+    )
+
+    app.order_service.fulfill_order(order.order_id)
+
+    assert_equal(
+        2,
+        app.stats_service.print_stats()["Eat Fit"],
+        "capacity should release after fulfillment",
+    )
+
+
 def test_greedy_failure_case() -> None:
     app = FoodOrderingApp()
 
@@ -524,6 +578,7 @@ def run_quick_tests() -> None:
     test_sample_flow()
     test_unavailable_item_rejected()
     test_capacity_fallback()
+    test_fulfillment_releases_capacity()
     test_greedy_failure_case()
 
 
