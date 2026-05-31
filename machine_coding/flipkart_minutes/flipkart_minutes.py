@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from threading import RLock
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict, Optional, Set
 
 
 class OrderStatus(Enum):
@@ -116,10 +116,12 @@ class FlipkartMinutesService:
         customer_repo: CustomerRepository,
         partner_repo: PartnerRepository,
         order_repo: OrderRepository,
+        item_catalog: Set[str],
     ):
         self.customer_repo = customer_repo
         self.partner_repo = partner_repo
         self.order_repo = order_repo
+        self.item_catalog = {item.strip().lower() for item in item_catalog}
         self.available_partners: Deque[str] = deque()
         self.pending_orders: Deque[str] = deque()
         self._lock = RLock()
@@ -142,6 +144,8 @@ class FlipkartMinutesService:
     def place_order(self, customer_id: str, item_name: str) -> Order:
         if not item_name.strip():
             raise ValidationError("Item name is required")
+        if item_name.strip().lower() not in self.item_catalog:
+            raise ValidationError(f"Item not supported: {item_name}")
         self.customer_repo.get(customer_id)
 
         with self._lock:
@@ -245,6 +249,7 @@ class FlipkartMinutesApp:
             self.customer_repo,
             self.partner_repo,
             self.order_repo,
+            {"milk", "bread", "eggs"},
         )
 
 

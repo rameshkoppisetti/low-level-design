@@ -13,6 +13,7 @@ from machine_coding.flipkart_minutes.flipkart_minutes import (
     OrderStatus,
     PartnerRepository,
     PartnerStatus,
+    ValidationError,
 )
 
 
@@ -21,6 +22,7 @@ def create_service() -> FlipkartMinutesService:
         CustomerRepository(),
         PartnerRepository(),
         OrderRepository(),
+        {"milk", "bread", "eggs"},
     )
 
 
@@ -79,6 +81,13 @@ class FlipkartMinutesTest(unittest.TestCase):
 
         with self.assertRaises(InvalidStateError):
             service.cancel_order(order.order_id)
+
+    def test_unsupported_item_is_rejected(self):
+        service = create_service()
+        service.onboard_customer("c1", "Anu")
+
+        with self.assertRaises(ValidationError):
+            service.place_order("c1", "Laptop")
 
     def test_wrong_partner_cannot_pickup(self):
         service = create_service()
