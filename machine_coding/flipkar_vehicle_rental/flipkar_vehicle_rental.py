@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from threading import RLock
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 
 class BookingStatus(Enum):
@@ -51,6 +51,7 @@ class Booking:
 class BranchRepository:
     def __init__(self):
         self.branches: Dict[str, Branch] = {}
+        self.branches_by_vehicle_type: Dict[str, Set[str]] = {}
         self._lock = RLock()
 
     def create(self, branch: Branch) -> None:
@@ -59,6 +60,8 @@ class BranchRepository:
             if key in self.branches:
                 raise ValidationError(f"Branch already exists: {branch.name}")
             self.branches[key] = branch
+            for vehicle_type in branch.inventory:
+                self.branches_by_vehicle_type.setdefault(vehicle_type, set()).add(key)
 
     def get(self, branch_name: str) -> Branch:
         with self._lock:
@@ -71,6 +74,21 @@ class BranchRepository:
         with self._lock:
             return list(self.branches.values())
 
+    def list_by_vehicle_type(self, vehicle_type: str) -> List[Branch]:
+        with self._lock:
+            branch_names = self.branches_by_vehicle_type.get(vehicle_type, set())
+            return [self.branches[name] for name in branch_names]
+
+    def add_vehicle_type_index(
+        self,
+        branch_name: str,
+        vehicle_type: str,
+    ) -> None:
+        with self._lock:
+            self.branches_by_vehicle_type.setdefault(vehicle_type, set()).add(
+                self._key(branch_name)
+            )
+
     def _key(self, branch_name: str) -> str:
         return branch_name.strip().lower()
 
@@ -78,15 +96,22 @@ class BranchRepository:
 class BookingRepository:
     def __init__(self):
         self.bookings: Dict[str, Booking] = {}
+        self.bookings_by_branch: Dict[str, List[Booking]] = {}
         self._lock = RLock()
 
     def save(self, booking: Booking) -> None:
         with self._lock:
             self.bookings[booking.booking_id] = booking
+            branch_key = _normalize_name(booking.branch_name)
+            self.bookings_by_branch.setdefault(branch_key, []).append(booking)
 
     def list_all(self) -> List[Booking]:
         with self._lock:
             return list(self.bookings.values())
+
+    def list_by_branch(self, branch_name: str) -> List[Booking]:
+        with self._lock:
+            return list(self.bookings_by_branch.get(_normalize_name(branch_name), []))
 
 
 class VehicleSelectionStrategy(ABC):
@@ -97,7 +122,7 @@ class VehicleSelectionStrategy(ABC):
         start_time: datetime,
         end_time: datetime,
         branches: List[Branch],
-        booking_repo: BookingRepository,
+        bookings_by_branch: Dict[str, List[Booking]],
     ) -> Optional[Branch]:
         pass
 
@@ -109,7 +134,7 @@ class LowestPriceSelectionStrategy(VehicleSelectionStrategy):
         start_time: datetime,
         end_time: datetime,
         branches: List[Branch],
-        booking_repo: BookingRepository,
+        bookings_by_branch: Dict[str, List[Booking]],
     ) -> Optional[Branch]:
         candidates = []
         for branch in branches:
@@ -121,7 +146,7 @@ class LowestPriceSelectionStrategy(VehicleSelectionStrategy):
                 vehicle_type,
                 start_time,
                 end_time,
-                booking_repo,
+                bookings_by_branch,
             )
             if available_count > 0:
                 candidates.append(branch)
@@ -143,14 +168,12 @@ class LowestPriceSelectionStrategy(VehicleSelectionStrategy):
         vehicle_type: str,
         start_time: datetime,
         end_time: datetime,
-        booking_repo: BookingRepository,
+        bookings_by_branch: Dict[str, List[Booking]],
     ) -> int:
         inventory = branch.inventory[vehicle_type]
         booked_count = 0
 
-        for booking in booking_repo.list_all():
-            if _normalize_name(booking.branch_name) != _normalize_name(branch.name):
-                continue
+        for booking in bookings_by_branch.get(_normalize_name(branch.name), []):
             if booking.vehicle_type != vehicle_type:
                 continue
             if _overlaps(start_time, end_time, booking.start_time, booking.end_time):
@@ -211,6 +234,7 @@ class FlipKarRentalService:
                     f"Vehicle type {vehicle_type} does not exist at {branch.name}"
                 )
             inventory.count += count
+            self.branch_repo.add_vehicle_type_index(branch.name, vehicle_type)
 
     def rent_vehicle(
         self,
@@ -227,8 +251,8 @@ class FlipKarRentalService:
                 vehicle_type,
                 start_time,
                 end_time,
-                self.branch_repo.list_all(),
-                self.booking_repo,
+                self.branch_repo.list_by_vehicle_type(vehicle_type),
+                self._bookings_by_branch_for_vehicle_type(vehicle_type),
             )
             if not branch:
                 raise BookingRejectedError(f"No {vehicle_type} available")
@@ -305,15 +329,24 @@ class FlipKarRentalService:
         inventory = branch.inventory[vehicle_type]
         booked_count = 0
 
-        for booking in self.booking_repo.list_all():
-            if _normalize_name(booking.branch_name) != _normalize_name(branch.name):
-                continue
+        for booking in self.booking_repo.list_by_branch(branch.name):
             if booking.vehicle_type != vehicle_type:
                 continue
             if _overlaps(start_time, end_time, booking.start_time, booking.end_time):
                 booked_count += 1
 
         return inventory.count - booked_count
+
+    def _bookings_by_branch_for_vehicle_type(
+        self,
+        vehicle_type: str,
+    ) -> Dict[str, List[Booking]]:
+        bookings_by_branch = {}
+        for branch in self.branch_repo.list_by_vehicle_type(vehicle_type):
+            bookings_by_branch[_normalize_name(branch.name)] = (
+                self.booking_repo.list_by_branch(branch.name)
+            )
+        return bookings_by_branch
 
     def _validate_vehicle_input(
         self,

@@ -88,6 +88,23 @@ class FlipKarVehicleRentalTest(unittest.TestCase):
         self.assertEqual("Malleshwaram", booking.branch_name)
         self.assertEqual("bike", booking.vehicle_type)
 
+    def test_vehicle_type_index_tracks_matching_branches(self):
+        branches = self.app.branch_repo.list_by_vehicle_type("suv")
+
+        self.assertEqual(
+            ["Koramangala", "Malleshwaram"],
+            sorted(branch.name for branch in branches),
+        )
+
+    def test_booking_index_tracks_bookings_by_normalized_branch(self):
+        booking = self.app.rental_service.rent_vehicle(
+            "suv", self.start, self.end, now=self.now
+        )
+
+        bookings = self.app.booking_repo.list_by_branch(" malleshwaram ")
+
+        self.assertEqual([booking], bookings)
+
     def test_branch_name_comparison_is_normalized_for_availability(self):
         booking = self.app.rental_service.rent_vehicle(
             "suv", self.start, self.end, now=self.now
