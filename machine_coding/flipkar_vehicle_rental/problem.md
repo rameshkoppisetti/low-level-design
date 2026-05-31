@@ -22,6 +22,19 @@ Implement an in-memory vehicle rental service for branches across a city. Custom
 - Keep selection strategy extensible.
 - Use direct service parameters instead of DTOs for interview speed.
 
+## Expectations
+
+- Functionally correct code for all completed features.
+- Create sample data inside the driver program, a test file, or a setup helper.
+- Unit tests are useful but not mandatory; the code must at least be demo-able from a main driver.
+- Keep the code modular with basic OO design.
+- Do not mix unrelated responsibilities into one class.
+- Use interfaces/contracts where behavior may change, such as vehicle selection strategy.
+- Make the design extensible so new selection strategies or storage implementations can be added without rewriting the codebase.
+- Handle edge cases gracefully with clear validation errors.
+- Keep the code legible and readable.
+- CLI, web application, REST API, and UI are not expected.
+
 
 
 ## Test cases: 

@@ -75,6 +75,16 @@ Output: Ordered from "A2B"
 - Capacity update changes max capacity and is allowed only if current in-flight item count does not exceed the new capacity.
 - All storage is in memory.
 
+## Interview Implementation Notes
+
+- Prefer direct service method parameters in a timed round:
+  - `add_restaurant(name, menu, capacity)`
+  - `change_menu(name, menu, capacity=None)`
+  - `place_order(items)`
+- Avoid DTO/request classes unless the interviewer explicitly asks for API-layer modeling.
+- DTOs such as `AddRestaurantRequest`, `ChangeMenuRequest`, and `PlaceOrderRequest` are clean in production code, but they add typing and debugging overhead in a 90-minute machine-coding round.
+- Spend time on correctness instead: lowest-price allocation, capacity checks, menu updates, fulfillment release, and basic tests.
+
 ## Folder Structure
 
 ```text
