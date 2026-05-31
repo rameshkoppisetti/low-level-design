@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from threading import RLock
@@ -104,6 +105,7 @@ class WorkoutSlot:
     total_seats: int
     day: str = DEFAULT_DAY
     booked_users: Set[str] = field(default_factory=set)
+    interested_users: Set[str] = field(default_factory=set)
     lock: RLock = field(default_factory=RLock, repr=False)
 
     def available_seats(self) -> int:
@@ -128,6 +130,21 @@ class Booking:
     user_name: str
     slot_id: str
     status: BookingStatus = BookingStatus.BOOKED
+
+
+class NotificationPublisher(ABC):
+    @abstractmethod
+    def publish_slot_available(self, user_name: str, slot: WorkoutSlot) -> None:
+        pass
+
+
+class LogNotificationPublisher(NotificationPublisher):
+    def publish_slot_available(self, user_name: str, slot: WorkoutSlot) -> None:
+        print(
+            "[Notification] "
+            f"{user_name}, seat available for {slot.center_name} "
+            f"{slot.workout_type} {slot.start_time}-{slot.end_time}"
+        )
 
 
 class CenterRepository:
@@ -366,10 +383,12 @@ class BookingService:
         user_repo: UserRepository,
         slot_repo: SlotRepository,
         booking_repo: BookingRepository,
+        notification_publisher: NotificationPublisher,
     ):
         self.user_repo = user_repo
         self.slot_repo = slot_repo
         self.booking_repo = booking_repo
+        self.notification_publisher = notification_publisher
 
     def book_session(self, request: SessionRequest) -> Booking:
         self.user_repo.get_or_raise(request.user_name)
@@ -395,7 +414,17 @@ class BookingService:
         with slot.lock:
             booking = self.booking_repo.cancel_booking(request.user_name, slot.slot_id)
             slot.booked_users.remove(user_key)
+            self._notify_interested_users(slot)
             return booking
+
+    def notify_me(self, request: SessionRequest) -> None:
+        self.user_repo.get_or_raise(request.user_name)
+        slot = self._find_slot(request)
+
+        with slot.lock:
+            if slot.available_seats() > 0:
+                raise ValidationError("Slot is available; notification is not needed")
+            slot.interested_users.add(request.user_name.strip())
 
     def _find_slot(self, request: SessionRequest) -> WorkoutSlot:
         return self.slot_repo.find_slot(
@@ -405,6 +434,13 @@ class BookingService:
             request.end_time,
             request.day,
         )
+
+    def _notify_interested_users(self, slot: WorkoutSlot) -> None:
+        users_to_notify = list(slot.interested_users)
+        slot.interested_users.clear()
+
+        for user_name in users_to_notify:
+            self.notification_publisher.publish_slot_available(user_name, slot)
 
 
 class AvailabilityService:
@@ -459,7 +495,7 @@ class AvailabilityService:
 
 
 class ClearFitApp:
-    def __init__(self):
+    def __init__(self, notification_publisher: Optional[NotificationPublisher] = None):
         self.center_repo = CenterRepository()
         self.user_repo = UserRepository()
         self.slot_repo = SlotRepository()
@@ -472,6 +508,7 @@ class ClearFitApp:
             self.user_repo,
             self.slot_repo,
             self.booking_repo,
+            notification_publisher or LogNotificationPublisher(),
         )
         self.availability_service = AvailabilityService(self.slot_repo)
 
