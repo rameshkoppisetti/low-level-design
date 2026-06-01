@@ -29,6 +29,17 @@ class Severity(Enum):
     P3 = "P3"
 
 
+ALLOWED_TRANSITIONS = {
+    BugStatus.OPEN: {BugStatus.REPORT_REVIEW},
+    BugStatus.REPORT_REVIEW: {BugStatus.REJECTED, BugStatus.ACKNOWLEDGED},
+    BugStatus.REJECTED: {BugStatus.CLOSED},
+    BugStatus.ACKNOWLEDGED: {BugStatus.BOUNTY_REVIEW},
+    BugStatus.BOUNTY_REVIEW: {BugStatus.BOUNTY_PAID},
+    BugStatus.BOUNTY_PAID: {BugStatus.CLOSED},
+    BugStatus.CLOSED: set(),
+}
+
+
 class ValidationError(Exception):
     pass
 
@@ -255,7 +266,7 @@ class BugBountyService:
 
         with self._lock:
             report = self.report_repo.get_by_title(title)
-            self._require_assigned_user(report, user)
+            self._require_assigned_user_or_admin(report, user)
 
             if description is not None:
                 if not description.strip():
@@ -330,21 +341,16 @@ class BugBountyService:
         if report.assigned_user != user.username:
             raise AuthorizationError("Only assigned user can update this report")
 
+    def _require_assigned_user_or_admin(self, report: BugReport, user: User) -> None:
+        if report.assigned_user != user.username and user.role != Role.ADMIN:
+            raise AuthorizationError("Only assigned user or admin can update this report")
+
     def _validate_status_transition(
         self,
         current_status: BugStatus,
         next_status: BugStatus,
     ) -> None:
-        allowed = {
-            BugStatus.OPEN: {BugStatus.REPORT_REVIEW},
-            BugStatus.REPORT_REVIEW: {BugStatus.REJECTED, BugStatus.ACKNOWLEDGED},
-            BugStatus.REJECTED: {BugStatus.CLOSED},
-            BugStatus.ACKNOWLEDGED: {BugStatus.BOUNTY_REVIEW},
-            BugStatus.BOUNTY_REVIEW: {BugStatus.BOUNTY_PAID},
-            BugStatus.BOUNTY_PAID: {BugStatus.CLOSED},
-            BugStatus.CLOSED: set(),
-        }
-        if next_status not in allowed[current_status]:
+        if next_status not in ALLOWED_TRANSITIONS[current_status]:
             raise InvalidStateError(
                 f"Invalid transition: {current_status.value} -> {next_status.value}"
             )
@@ -484,11 +490,26 @@ def test_assigned_report_filters() -> None:
     assert_equal(1, len(service.list_assigned_incomplete_reports()), "incomplete reports")
 
 
+def test_admin_can_edit_any_report() -> None:
+    app = BugBountyApp()
+    service = app.bug_bounty_service
+    preload_users(service)
+
+    app.auth_service.login("user1")
+    service.report_bug("Bug Title 6", "Bug Description 6", Severity.P2, "r6@email.com")
+    service.assign_bug_report("Bug Title 6", "user2")
+    service.update_bug_report("Bug Title 6", bounty_amount=500)
+
+    report = service.view_bug_report_details("Bug Title 6")
+    assert_equal(500, report.bounty_amount, "admin can edit assigned report")
+
+
 def run_tests() -> None:
     test_report_assignment_and_status_flow()
     test_only_assigned_user_can_update()
     test_admin_delete_only()
     test_assigned_report_filters()
+    test_admin_can_edit_any_report()
 
 
 def main() -> None:
