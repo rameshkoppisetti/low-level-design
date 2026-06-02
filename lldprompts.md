@@ -7,8 +7,7 @@ Follow this structure:
 1. Requirements — 5 min
    - Functional requirements
    - Non-functional requirements
-   - Out of scope
-   - Edge cases
+   - Out of scope 
 
 2. APIs / Entry Points — 5 min
    - REST APIs
