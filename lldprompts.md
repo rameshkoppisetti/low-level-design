@@ -12,8 +12,7 @@ Follow this structure:
 2. APIs / Entry Points — 5 min
    - REST APIs
    - Internal APIs/events
-   - Request DTOs
-   - Response DTOs
+   - Request DTOs keep main dto only 
 
 3. Entities & Relationships — 8 min
    - Core entities
