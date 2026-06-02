@@ -20,6 +20,8 @@ Follow this structure:
    - Relationships
 
 4. Class Design — 10–12 min
+   - First show the layering:
+     Domain Models -> Repositories -> Services -> Controllers / Client Code
    - Controllers
    - Services
    - Interfaces
@@ -42,6 +44,65 @@ Follow this structure:
 7. Extensibility — 3 min
    - Design patterns
    - Future changes
+
+Design rule:
+- Keep domain models as simple state + behavior objects.
+- Keep repositories responsible only for storage/index lookups.
+- Keep services responsible for business rules, validation, orchestration, and transactions.
+- Keep controllers/client code thin. They should call services, not contain business logic.
+- Use strategies only when behavior genuinely varies, such as pricing, fine calculation, assignment, ranking, payment, notification handlers, or discount calculation.
+- Use factory only when selecting an implementation from a type/mode.
+- Use locks in services/entities where shared mutable state can race.
+- Prefer in-memory repositories for machine coding, but describe DB schema in LLD.
+
+Default component blueprint:
+
+Domain:
+- Core entities
+- Enums
+- Value objects / request objects if needed
+
+Repository:
+- EntityRepository
+- Query indexes for frequent lookups
+- No business logic
+
+Service:
+- SearchService / MatchingService / BookingService / PaymentService etc.
+- Validation
+- State transitions
+- Concurrency/recheck inside lock
+
+Controller / Client:
+- Thin entry point
+- Converts input to service calls
+- Prints/demo output
+
+Example layering for rental/booking systems:
+
+Domain:
+- Vehicle / Resource / Seat / Slot
+- Booking / Reservation
+- User
+- PricingStrategy
+- FineStrategy
+- PaymentModule
+
+Repository:
+- VehicleRepository / ResourceRepository
+- BookingRepository
+
+Service:
+- SearchService
+- BookingService / RentalService
+- AvailabilityService if availability logic is reusable
+
+Controller:
+- RentalController / BookingController
+- Main demo or test driver
+
+Interview line:
+“I separate domain, repository, service, and controller responsibilities. Repositories only store and query data. Services contain business logic and state transitions. Controllers are thin wrappers. Strategies are used only for behavior that is expected to vary.”
 
 Use this Notification System example as reference:
 
@@ -106,7 +167,7 @@ NotificationHandler
 - PushHandler
 - InAppHandler
 
-Classes:
+Classes: add controller if really needed
 NotificationController
 PreferenceController
 NotificationService
