@@ -67,6 +67,7 @@ class LedgerService:
 class TransactionService:
     def __init__(self, ledger):
         self.ledger = ledger
+        self.transactions={}
         self.processed_refs = set()  # idempotency
 
     def transfer(self, from_acc, to_acc, amount, ref_id):
@@ -80,6 +81,7 @@ class TransactionService:
             return
 
         txn = Transaction(ref_id)
+        
 
         # atomic block (simulate DB txn)
         debit = LedgerEntry(from_acc.id, amount, EntryType.DEBIT, txn.id)
@@ -87,7 +89,8 @@ class TransactionService:
 
         self.ledger.post_entry(debit)
         self.ledger.post_entry(credit)
-
+        
+        self.transactions[txn.id]=txn
         self.processed_refs.add(ref_id)
     
     def withdraw(self, account, amount, ref_id):
