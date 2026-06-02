@@ -5,11 +5,11 @@ import threading
 class ATMState:
     def insert_card(self, atm, card): print("Invalid operation")
     def enter_pin(self, atm, pin): print("Invalid operation")
+    def select_transaction(self, atm): print("Invalid operation")
     def withdraw(self, atm, amount): print("Invalid operation")
     def deposit(self, atm, amount): print("Invalid operation")
-    def eject_card(self, atm): print("Invalid operation")
-    def select_transaction(self, atm): print("Invalid operation")
     def check_balance(self, atm): print("Invalid operation")
+    def eject_card(self, atm): print("Invalid operation")
     def exit(self, atm): print("Invalid operation")
 
 
