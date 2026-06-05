@@ -39,6 +39,10 @@ class Slot:
         with self.lock:
             if not self.available:
                 return False
+
+            if self.type != vehicle.type:
+                return False
+
             self.vehicle = vehicle
             self.available = False
             return True
