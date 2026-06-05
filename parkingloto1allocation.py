@@ -217,7 +217,7 @@ def create_floors(n):
         slots += [Slot(VehicleType.CAR) for _ in range(3)]
         slots += [Slot(VehicleType.TRUCK) for _ in range(2)]
 
-        floors.append(Floor(i, slots))
+        floors.append(Floor(i+1, slots))
 
     return floors
 
