@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from queue import Empty, Queue
 import datetime
 import enum
 import uuid
@@ -77,10 +78,12 @@ class AllocationStrategy(ABC):
 
 class O1AllocationStrategy(AllocationStrategy):
     def allocate(self, parking_lot, vehicle):
-        slots = parking_lot.free_slots[vehicle.type]
-        if not slots:
+        queue = parking_lot.free_slots[vehicle.type]
+
+        try:
+            return queue.get_nowait()
+        except Empty:
             return None
-        return next(iter(slots))
 
 
 class PricingStrategy(ABC):
@@ -116,56 +119,53 @@ class ParkingLot:
 
         # O(1) free slot index
         self.free_slots = {
-            VehicleType.BIKE: set(),
-            VehicleType.CAR: set(),
-            VehicleType.TRUCK: set()
+            VehicleType.BIKE: Queue(),
+            VehicleType.CAR: Queue(),
+            VehicleType.TRUCK: Queue()
         }
-
-        # Locks per vehicle type
-        self.type_locks = {
-            VehicleType.BIKE: threading.Lock(),
-            VehicleType.CAR: threading.Lock(),
-            VehicleType.TRUCK: threading.Lock()
-        }
+        self.ticket_lock = threading.Lock()
 
         self._initialize_free_slots()
 
     def _initialize_free_slots(self):
         for floor in self.floors:
             for slot in floor.slots:
-                self.free_slots[slot.type].add(slot)
+                self.free_slots[slot.type].put(slot)
 
     # ---------- PARK ----------
     def park(self, vehicle):
-        for _ in range(3):  # retry
-            slot = self.allocation_strategy.allocate(self, vehicle)
+        slot = self.allocation_strategy.allocate(self, vehicle)
 
-            if not slot:
-                raise ValueError("No slot available")
+        if not slot:
+            raise ValueError("No slot available")
 
-            with self.type_locks[vehicle.type]:
-                if slot.park(vehicle):
-                    self.free_slots[vehicle.type].remove(slot)
+        if not slot.park(vehicle):
+            raise ValueError("Slot booking failed")
 
-                    ticket = Ticket(vehicle.id, slot)
-                    self.tickets[ticket.id] = ticket
-                    return ticket
+        ticket = Ticket(vehicle.id, slot)
 
-        raise ValueError("Retry booking failed")
+        with self.ticket_lock:
+            self.tickets[ticket.id] = ticket
+
+        return ticket
 
     # ---------- UNPARK ----------
     def unpark(self, ticket_id):
-        if ticket_id not in self.tickets:
-            raise ValueError("Invalid ticket")
+        with self.ticket_lock:
+            if ticket_id not in self.tickets:
+                raise ValueError("Invalid ticket")
 
-        ticket = self.tickets[ticket_id]
+            ticket = self.tickets.pop(ticket_id)
+
         ticket.end = datetime.datetime.now()
 
         slot = ticket.slot
         vehicle = slot.unpark()
 
-        with self.type_locks[vehicle.type]:
-            self.free_slots[vehicle.type].add(slot)
+        if vehicle is None:
+            raise ValueError("Slot already empty")
+
+        self.free_slots[vehicle.type].put(slot)
 
         duration = (ticket.end - ticket.start).total_seconds() / 3600
 
@@ -174,8 +174,6 @@ class ParkingLot:
             ticket.end,
             vehicle.type
         )
-
-        del self.tickets[ticket_id]
 
         return {
             "vehicle_id": vehicle.id,
@@ -198,7 +196,8 @@ class ParkingLot:
 
     # ---------- GET TICKET ----------
     def get_ticket_details(self, ticket_id):
-        return self.tickets.get(ticket_id)
+        with self.ticket_lock:
+            return self.tickets.get(ticket_id)
 
 
 # =========================
